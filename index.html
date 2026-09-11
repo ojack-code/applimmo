@@ -315,7 +315,9 @@ function blankProject(){
     dureePret: '',
     loyer: '',
     chargesMensuelles: '',
-    nombreLocataires: ''
+    nombreLocataires: '',
+    inflationLoyer: '',
+    inflationCharges: ''
   };
 }
 
@@ -351,9 +353,9 @@ function travauxTotal(p){
 function coutTotal(p){
   return num(p.prixAchat) + num(p.fraisAnnexes) + travauxTotal(p);
 }
-// Coût affiché dans le résumé : travaux + prix d'achat (onglet Infos).
+// Coût affiché dans le résumé : travaux + prix d'achat + frais annexes (onglet Infos).
 function coutTotalResume(p){
-  return travauxTotal(p) + num(p.prixAchat);
+  return travauxTotal(p) + num(p.prixAchat) + num(p.fraisAnnexes);
 }
 function mensualite(p){
   const C = num(p.sommeEmpruntee);
@@ -391,16 +393,20 @@ function anneesRetour(p){
 function projectionCashflow(p, years){
   years = years || 25;
   const apport = apportNecessaire(p);
-  const loyerAnnuel = num(p.loyer) * 12;
-  const chargesAnnuelles = num(p.chargesMensuelles) * 12;
+  const loyerAnnuelBase = num(p.loyer) * 12;
+  const chargesAnnuellesBase = num(p.chargesMensuelles) * 12;
   const mensuAnnuelle = mensualite(p) * 12;
   const dureeAns = num(p.dureePret);
+  const tauxInflLoyer = num(p.inflationLoyer) / 100;
+  const tauxInflCharges = num(p.inflationCharges) / 100;
 
   const points = [{ year: 0, value: -apport }];
   let cumul = -apport;
   for(let y = 1; y <= years; y++){
     const empruntActif = dureeAns > 0 && y <= dureeAns;
-    const cfAnnee = loyerAnnuel - chargesAnnuelles - (empruntActif ? mensuAnnuelle : 0);
+    const loyerAnnee = loyerAnnuelBase * Math.pow(1 + tauxInflLoyer, y - 1);
+    const chargesAnnee = chargesAnnuellesBase * Math.pow(1 + tauxInflCharges, y - 1);
+    const cfAnnee = loyerAnnee - chargesAnnee - (empruntActif ? mensuAnnuelle : 0);
     cumul += cfAnnee;
     points.push({ year: y, value: cumul });
   }
@@ -510,7 +516,7 @@ function buildSummary(p){
   else { retourVal = retour.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' ans'; retourCls = ''; }
 
   const metrics = [
-    { lbl: 'Coût total (travaux + prix d\u2019achat)', val: fmtEUR(coutTotalResume(p)), cls: '' },
+    { lbl: 'Coût total (travaux + achat + frais)', val: fmtEUR(coutTotalResume(p)), cls: '' },
     { lbl: 'Retour sur investissement', val: retourVal, cls: retourCls },
     { lbl: 'Loyer mensuel prévu', val: fmtEUR(num(p.loyer)), cls: '' },
     { lbl: 'Cash-flow mensuel', val: fmtEUR(cf), cls: cf >= 0 ? 'good' : 'bad' },
@@ -679,6 +685,18 @@ function renderFinancement(container, p){
 
   panel.appendChild(field('Charges mensuelles — copro, taxe foncière/12, assurance... (€)', p.chargesMensuelles, v => p.chargesMensuelles = v, { type: 'number', inputmode: 'decimal', hint: 'Optionnel, affine le cash-flow et la rentabilité nette.' }));
 
+  const row3 = document.createElement('div');
+  row3.className = 'field-row';
+  row3.appendChild(field('Inflation du loyer (%/an)', p.inflationLoyer, v => p.inflationLoyer = v, { type: 'number', inputmode: 'decimal', placeholder: '1.5' }));
+  row3.appendChild(field('Inflation des charges (%/an)', p.inflationCharges, v => p.inflationCharges = v, { type: 'number', inputmode: 'decimal', placeholder: '2' }));
+  panel.appendChild(row3);
+  const infHint = document.createElement('div');
+  infHint.className = 'hint';
+  infHint.style.marginTop = '-8px';
+  infHint.style.marginBottom = '16px';
+  infHint.textContent = 'Utilisées uniquement dans la projection sur 25 ans de l\u2019onglet Analyse (la mensualité de crédit, elle, reste fixe).';
+  panel.appendChild(infHint);
+
   const total = document.createElement('div');
   total.className = 'section-total';
   total.innerHTML = `<span>Mensualité de crédit estimée</span><span class="num">${fmtEUR(mensualite(p))}</span>`;
@@ -768,9 +786,15 @@ function renderAnalyse(container, p){
 
   const nette = document.createElement('div');
   nette.className = 'metric';
-  nette.style.marginBottom = '22px';
+  nette.style.marginBottom = '6px';
   nette.innerHTML = `<div class="val num">${fmtPct(rentabiliteNette(p))}</div><div class="lbl">Rentabilité nette (approx.)</div>`;
   panel.appendChild(nette);
+
+  const netteHint = document.createElement('div');
+  netteHint.className = 'hint';
+  netteHint.style.marginBottom = '22px';
+  netteHint.textContent = '(loyer annuel − charges annuelles) ÷ (prix d\u2019achat + frais annexes + travaux) × 100. Calcul basé sur les valeurs actuelles, sans inflation.';
+  panel.appendChild(netteHint);
 
   const chartLabel = document.createElement('label');
   chartLabel.textContent = 'Flux de trésorerie cumulés sur 25 ans';
@@ -790,9 +814,9 @@ function renderAnalyse(container, p){
   note.className = 'hint';
   note.style.marginTop = '10px';
   if(breakevenPt || points[0].value >= 0){
-    note.textContent = 'Le point vert marque l\u2019année où l\u2019apport initial est récupéré. Projection à loyer, charges et taux constants ; la mensualité s\u2019arrête à la fin du prêt.';
+    note.textContent = 'Le point vert marque l\u2019année où l\u2019apport initial est récupéré. Le loyer et les charges évoluent selon les taux d\u2019inflation renseignés dans l\u2019onglet Financement ; la mensualité de crédit reste fixe et s\u2019arrête à la fin du prêt.';
   } else {
-    note.textContent = 'Avec ces hypothèses, l\u2019apport initial n\u2019est pas récupéré sur 25 ans via le cash-flow seul. Projection à loyer, charges et taux constants ; la mensualité s\u2019arrête à la fin du prêt.';
+    note.textContent = 'Avec ces hypothèses, l\u2019apport initial n\u2019est pas récupéré sur 25 ans via le cash-flow seul. Le loyer et les charges évoluent selon les taux d\u2019inflation renseignés dans l\u2019onglet Financement ; la mensualité de crédit reste fixe et s\u2019arrête à la fin du prêt.';
   }
   panel.appendChild(note);
 
