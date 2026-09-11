@@ -351,9 +351,9 @@ function travauxTotal(p){
 function coutTotal(p){
   return num(p.prixAchat) + num(p.fraisAnnexes) + travauxTotal(p);
 }
-// Coût affiché dans le résumé : emprunt + travaux, comme demandé.
+// Coût affiché dans le résumé : travaux + prix d'achat (onglet Infos).
 function coutTotalResume(p){
-  return num(p.sommeEmpruntee) + travauxTotal(p);
+  return travauxTotal(p) + num(p.prixAchat);
 }
 function mensualite(p){
   const C = num(p.sommeEmpruntee);
@@ -383,6 +383,28 @@ function anneesRetour(p){
   if(apport <= 0) return 0;
   if(cfAnnuel <= 0) return null;
   return apport / cfAnnuel;
+}
+
+// Projection du cash-flow cumulé, année par année, sur `years` ans.
+// Le point 0 correspond à l'apport initial investi (valeur négative).
+// La mensualité de crédit s'arrête une fois la durée du prêt écoulée.
+function projectionCashflow(p, years){
+  years = years || 25;
+  const apport = apportNecessaire(p);
+  const loyerAnnuel = num(p.loyer) * 12;
+  const chargesAnnuelles = num(p.chargesMensuelles) * 12;
+  const mensuAnnuelle = mensualite(p) * 12;
+  const dureeAns = num(p.dureePret);
+
+  const points = [{ year: 0, value: -apport }];
+  let cumul = -apport;
+  for(let y = 1; y <= years; y++){
+    const empruntActif = dureeAns > 0 && y <= dureeAns;
+    const cfAnnee = loyerAnnuel - chargesAnnuelles - (empruntActif ? mensuAnnuelle : 0);
+    cumul += cfAnnee;
+    points.push({ year: y, value: cumul });
+  }
+  return points;
 }
 
 function projectLabel(p){
@@ -488,9 +510,9 @@ function buildSummary(p){
   else { retourVal = retour.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' ans'; retourCls = ''; }
 
   const metrics = [
-    { lbl: 'Coût total (emprunt + travaux)', val: fmtEUR(coutTotalResume(p)), cls: '' },
+    { lbl: 'Coût total (travaux + prix d\u2019achat)', val: fmtEUR(coutTotalResume(p)), cls: '' },
     { lbl: 'Retour sur investissement', val: retourVal, cls: retourCls },
-    { lbl: 'Rentabilité nette (approx.)', val: fmtPct(rentabiliteNette(p)), cls: '' },
+    { lbl: 'Loyer mensuel prévu', val: fmtEUR(num(p.loyer)), cls: '' },
     { lbl: 'Cash-flow mensuel', val: fmtEUR(cf), cls: cf >= 0 ? 'good' : 'bad' },
   ];
   metrics.forEach(m => {
@@ -509,7 +531,8 @@ function renderTabs(container, p){
   const defs = [
     { id: 'infos', label: 'Infos' },
     { id: 'travaux', label: 'Travaux' },
-    { id: 'financement', label: 'Financement' }
+    { id: 'financement', label: 'Financement' },
+    { id: 'analyse', label: 'Analyse' }
   ];
   defs.forEach(d => {
     const b = document.createElement('button');
@@ -669,6 +692,113 @@ function renderFinancement(container, p){
   container.appendChild(panel);
 }
 
+function buildCashflowChart(points){
+  const W = 680, H = 280;
+  const padL = 66, padR = 16, padT = 16, padB = 30;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const values = points.map(pt => pt.value);
+  let minV = Math.min(0, ...values);
+  let maxV = Math.max(0, ...values);
+  if(minV === maxV){ minV -= 1; maxV += 1; }
+  const spread = maxV - minV;
+  minV -= spread * 0.08;
+  maxV += spread * 0.08;
+
+  const maxYear = points[points.length - 1].year;
+  const x = (year) => padL + (year / maxYear) * plotW;
+  const y = (val) => padT + (1 - (val - minV) / (maxV - minV)) * plotH;
+
+  const linePath = points.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${x(pt.year).toFixed(1)} ${y(pt.value).toFixed(1)}`).join(' ');
+  const areaPath = `${linePath} L ${x(maxYear).toFixed(1)} ${y(0).toFixed(1)} L ${x(0).toFixed(1)} ${y(0).toFixed(1)} Z`;
+
+  // Point de bascule : première année où le cumul devient positif.
+  let breakeven = null;
+  for(let i = 1; i < points.length; i++){
+    if(points[i - 1].value < 0 && points[i].value >= 0){
+      const p0 = points[i - 1], p1 = points[i];
+      const ratio = (0 - p0.value) / (p1.value - p0.value);
+      breakeven = p0.year + ratio;
+      break;
+    }
+  }
+
+  const yearTicks = [];
+  const step = maxYear <= 10 ? 1 : 5;
+  for(let yr = 0; yr <= maxYear; yr += step) yearTicks.push(yr);
+
+  const valueTicks = [minV + spread * 0.08, minV + (maxV - minV) / 2, maxV - spread * 0.08];
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, monospace">`;
+
+  // grille horizontale + labels y
+  valueTicks.forEach(v => {
+    const yy = y(v).toFixed(1);
+    svg += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--border)" stroke-width="1"/>`;
+    svg += `<text x="${padL - 10}" y="${(+yy + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-dim)">${Math.round(v).toLocaleString('fr-FR')} €</text>`;
+  });
+
+  // ligne zéro
+  const y0 = y(0).toFixed(1);
+  svg += `<line x1="${padL}" y1="${y0}" x2="${W - padR}" y2="${y0}" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="3 3"/>`;
+
+  // labels x
+  yearTicks.forEach(yr => {
+    svg += `<text x="${x(yr).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="var(--text-dim)">${yr}</text>`;
+  });
+
+  // aire + ligne
+  svg += `<path d="${areaPath}" fill="var(--accent)" opacity="0.12" stroke="none"/>`;
+  svg += `<path d="${linePath}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+
+  // marqueur de bascule
+  if(breakeven !== null){
+    const bx = x(breakeven).toFixed(1), by = y(0).toFixed(1);
+    svg += `<circle cx="${bx}" cy="${by}" r="4.5" fill="var(--good)" stroke="var(--bg)" stroke-width="2"/>`;
+  }
+
+  svg += `</svg>`;
+  return svg;
+}
+
+function renderAnalyse(container, p){
+  const panel = document.createElement('div');
+  panel.className = 'panel active';
+
+  const nette = document.createElement('div');
+  nette.className = 'metric';
+  nette.style.marginBottom = '22px';
+  nette.innerHTML = `<div class="val num">${fmtPct(rentabiliteNette(p))}</div><div class="lbl">Rentabilité nette (approx.)</div>`;
+  panel.appendChild(nette);
+
+  const chartLabel = document.createElement('label');
+  chartLabel.textContent = 'Flux de trésorerie cumulés sur 25 ans';
+  chartLabel.style.display = 'block';
+  chartLabel.style.fontSize = '0.82rem';
+  chartLabel.style.color = 'var(--text-dim)';
+  chartLabel.style.marginBottom = '10px';
+  panel.appendChild(chartLabel);
+
+  const points = projectionCashflow(p, 25);
+  const chartWrap = document.createElement('div');
+  chartWrap.innerHTML = buildCashflowChart(points);
+  panel.appendChild(chartWrap);
+
+  const breakevenPt = points.find((pt, i) => i > 0 && points[i - 1].value < 0 && pt.value >= 0);
+  const note = document.createElement('div');
+  note.className = 'hint';
+  note.style.marginTop = '10px';
+  if(breakevenPt || points[0].value >= 0){
+    note.textContent = 'Le point vert marque l\u2019année où l\u2019apport initial est récupéré. Projection à loyer, charges et taux constants ; la mensualité s\u2019arrête à la fin du prêt.';
+  } else {
+    note.textContent = 'Avec ces hypothèses, l\u2019apport initial n\u2019est pas récupéré sur 25 ans via le cash-flow seul. Projection à loyer, charges et taux constants ; la mensualité s\u2019arrête à la fin du prêt.';
+  }
+  panel.appendChild(note);
+
+  container.appendChild(panel);
+}
+
 function renderContent(){
   const content = document.getElementById('content');
   content.innerHTML = '';
@@ -702,6 +832,7 @@ function renderContent(){
   if(state.currentTab === 'infos') renderInfos(content, p);
   if(state.currentTab === 'travaux') renderTravaux(content, p);
   if(state.currentTab === 'financement') renderFinancement(content, p);
+  if(state.currentTab === 'analyse') renderAnalyse(content, p);
 
   const footer = document.createElement('div');
   footer.className = 'footer-actions';
