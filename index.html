@@ -9,16 +9,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg: #12161d;
-    --surface: #1a2029;
-    --surface-2: #212836;
-    --border: #2b3242;
-    --text: #e9e7e1;
-    --text-dim: #8d94a3;
-    --accent: #c9a15a;
-    --accent-dim: #8a7343;
-    --good: #6fbf8b;
-    --bad: #d9756a;
+    --bg: #fdfcfa;
+    --surface: #f3f1eb;
+    --surface-2: #eae6dc;
+    --border: #dad4c6;
+    --text: #211e18;
+    --text-dim: #756c5b;
+    --accent: #9c6f2b;
+    --accent-dim: #c3985a;
+    --good: #2f7d54;
+    --bad: #b6432f;
     --radius: 10px;
     font-size: 16px;
   }
@@ -62,10 +62,10 @@
   .btn.primary{
     background: var(--accent);
     border-color: var(--accent);
-    color: #191307;
+    color: #fdfcfa;
     font-weight: 500;
   }
-  .btn.primary:hover{ background: #d9b06a; }
+  .btn.primary:hover{ background: var(--accent-dim); }
   .btn.ghost{ background: transparent; }
   .btn.danger{ color: var(--bad); border-color: var(--border); background: transparent; }
   .btn.danger:hover{ border-color: var(--bad); }
@@ -187,6 +187,11 @@
     outline: none;
     border-color: var(--accent-dim);
   }
+  .field textarea{
+    resize: vertical;
+    line-height: 1.5;
+    font-family: inherit;
+  }
   .field-row{
     display:grid;
     grid-template-columns: 1fr 1fr;
@@ -299,6 +304,8 @@ function blankProject(){
     dpe: '',
     prixAchat: '',
     fraisAnnexes: '',
+    detailAppartement: '',
+    quartierAvantageux: '',
     // Onglet 2 — Travaux
     estimationTravaux: '',
     detailTravaux: [],
@@ -307,7 +314,8 @@ function blankProject(){
     tauxInteret: '',
     dureePret: '',
     loyer: '',
-    chargesMensuelles: ''
+    chargesMensuelles: '',
+    nombreLocataires: ''
   };
 }
 
@@ -338,11 +346,14 @@ function detailTotal(p){
   return (p.detailTravaux || []).reduce((s, r) => s + num(r.montant), 0);
 }
 function travauxTotal(p){
-  const d = detailTotal(p);
-  return d > 0 ? d : num(p.estimationTravaux);
+  return num(p.estimationTravaux) + detailTotal(p);
 }
 function coutTotal(p){
   return num(p.prixAchat) + num(p.fraisAnnexes) + travauxTotal(p);
+}
+// Coût affiché dans le résumé : emprunt + travaux, comme demandé.
+function coutTotalResume(p){
+  return num(p.sommeEmpruntee) + travauxTotal(p);
 }
 function mensualite(p){
   const C = num(p.sommeEmpruntee);
@@ -355,11 +366,6 @@ function mensualite(p){
 function cashflowMensuel(p){
   return num(p.loyer) - mensualite(p) - num(p.chargesMensuelles);
 }
-function rentabiliteBrute(p){
-  const ct = coutTotal(p);
-  if(ct <= 0) return 0;
-  return (num(p.loyer) * 12 / ct) * 100;
-}
 function rentabiliteNette(p){
   const ct = coutTotal(p);
   if(ct <= 0) return 0;
@@ -368,6 +374,15 @@ function rentabiliteNette(p){
 }
 function apportNecessaire(p){
   return coutTotal(p) - num(p.sommeEmpruntee);
+}
+// Nombre d'années pour récupérer l'apport personnel via le cash-flow mensuel.
+// null = jamais atteint avec un cash-flow négatif ou nul.
+function anneesRetour(p){
+  const apport = apportNecessaire(p);
+  const cfAnnuel = cashflowMensuel(p) * 12;
+  if(apport <= 0) return 0;
+  if(cfAnnuel <= 0) return null;
+  return apport / cfAnnuel;
 }
 
 function projectLabel(p){
@@ -421,6 +436,11 @@ function field(labelText, value, onInput, opts){
     empty.textContent = '—';
     empty.selected = !value;
     input.prepend(empty);
+  } else if(opts.textarea){
+    input = document.createElement('textarea');
+    input.rows = opts.rows || 4;
+    input.value = value || '';
+    if(opts.placeholder) input.placeholder = opts.placeholder;
   } else {
     input = document.createElement('input');
     input.type = opts.type || 'text';
@@ -461,9 +481,15 @@ function buildSummary(p){
   grid.className = 'summary-grid';
 
   const cf = cashflowMensuel(p);
+  const retour = anneesRetour(p);
+  let retourVal, retourCls;
+  if(retour === null){ retourVal = 'Non atteint'; retourCls = 'bad'; }
+  else if(retour === 0){ retourVal = 'Immédiat'; retourCls = 'good'; }
+  else { retourVal = retour.toLocaleString('fr-FR', { maximumFractionDigits: 1 }) + ' ans'; retourCls = ''; }
+
   const metrics = [
-    { lbl: 'Coût total du projet', val: fmtEUR(coutTotal(p)), cls: '' },
-    { lbl: 'Rentabilité brute', val: fmtPct(rentabiliteBrute(p)), cls: '' },
+    { lbl: 'Coût total (emprunt + travaux)', val: fmtEUR(coutTotalResume(p)), cls: '' },
+    { lbl: 'Retour sur investissement', val: retourVal, cls: retourCls },
     { lbl: 'Rentabilité nette (approx.)', val: fmtPct(rentabiliteNette(p)), cls: '' },
     { lbl: 'Cash-flow mensuel', val: fmtEUR(cf), cls: cf >= 0 ? 'good' : 'bad' },
   ];
@@ -515,6 +541,10 @@ function renderInfos(container, p){
 
   panel.appendChild(field('Frais annexes — notaire, agence... (€)', p.fraisAnnexes, v => p.fraisAnnexes = v, { type: 'number', inputmode: 'decimal', hint: 'Optionnel, inclus dans le coût total du projet.' }));
 
+  panel.appendChild(field('Quartier avantageux', p.quartierAvantageux, v => p.quartierAvantageux = v, { select: ['Oui', 'Non'] }));
+
+  panel.appendChild(field('Détail de l\u2019appartement', p.detailAppartement, v => p.detailAppartement = v, { textarea: true, rows: 5, placeholder: 'Agencement, état général, exposition, vue, copropriété...' }));
+
   panel.appendChild(field('Lien de l\u2019annonce', p.lien, v => p.lien = v, { placeholder: 'https://...' }));
   if(p.lien){
     const line = document.createElement('div');
@@ -532,7 +562,7 @@ function renderTravaux(container, p){
 
   panel.appendChild(field('Estimation globale des travaux (€)', p.estimationTravaux, v => p.estimationTravaux = v, {
     type: 'number', inputmode: 'decimal',
-    hint: 'Utilisée si aucun détail n\u2019est renseigné ci-dessous.'
+    hint: 'S\u2019ajoute au détail ci-dessous pour former le total retenu.'
   }));
 
   const listLabel = document.createElement('label');
@@ -618,7 +648,12 @@ function renderFinancement(container, p){
   row1.appendChild(field('Durée du prêt (années)', p.dureePret, v => p.dureePret = v, { type: 'number', inputmode: 'numeric', placeholder: '20' }));
   panel.appendChild(row1);
 
-  panel.appendChild(field('Loyer mensuel prévu (€)', p.loyer, v => p.loyer = v, { type: 'number', inputmode: 'decimal' }));
+  const row2b = document.createElement('div');
+  row2b.className = 'field-row';
+  row2b.appendChild(field('Loyer mensuel prévu (€)', p.loyer, v => p.loyer = v, { type: 'number', inputmode: 'decimal' }));
+  row2b.appendChild(field('Nombre de locataires', p.nombreLocataires, v => p.nombreLocataires = v, { type: 'number', inputmode: 'numeric' }));
+  panel.appendChild(row2b);
+
   panel.appendChild(field('Charges mensuelles — copro, taxe foncière/12, assurance... (€)', p.chargesMensuelles, v => p.chargesMensuelles = v, { type: 'number', inputmode: 'decimal', hint: 'Optionnel, affine le cash-flow et la rentabilité nette.' }));
 
   const total = document.createElement('div');
