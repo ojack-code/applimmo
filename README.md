@@ -1,4 +1,4 @@
-# Rendement — suivi de rentabilité immobilière
+# Applimmo
 
 Application web à fichier unique (`index.html`), sans installation ni serveur.
 Tes projets sont enregistrés directement dans le navigateur (localStorage) :
