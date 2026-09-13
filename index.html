@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
-<title>App'immo</title>
+<title>Rendement — suivi de rentabilité immobilière</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -257,6 +257,28 @@
     justify-content: flex-end;
   }
 
+  .info-block{
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+  .info-block h3{ font-size: 1rem; margin-bottom: 8px; }
+  .info-block p{
+    color: var(--text-dim);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin: 0 0 10px;
+  }
+  .info-block code{
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+
   .link-line{
     display:flex;
     align-items:center;
@@ -385,6 +407,18 @@ function anneesRetour(p){
   if(apport <= 0) return 0;
   if(cfAnnuel <= 0) return null;
   return apport / cfAnnuel;
+}
+
+// Loyer mensuel qu'il faudrait fixer pour atteindre un retour sur
+// investissement (via le cash-flow, valeurs actuelles) en `targetYears` ans.
+function loyerCiblePourRetour(p, targetYears){
+  const apport = apportNecessaire(p);
+  if(apport <= 0) return { immediat: true };
+  const chargesAnnuelles = num(p.chargesMensuelles) * 12;
+  const mensuAnnuelle = mensualite(p) * 12;
+  const cfAnnuelCible = apport / targetYears;
+  const loyerAnnuelCible = cfAnnuelCible + chargesAnnuelles + mensuAnnuelle;
+  return { immediat: false, loyerMensuel: Math.max(0, loyerAnnuelCible / 12) };
 }
 
 // Projection du cash-flow cumulé, année par année, sur `years` ans.
@@ -819,6 +853,36 @@ function renderAnalyse(container, p){
     note.textContent = 'Avec ces hypothèses, l\u2019apport initial n\u2019est pas récupéré sur 25 ans via le cash-flow seul. Le loyer et les charges évoluent selon les taux d\u2019inflation renseignés dans l\u2019onglet Financement ; la mensualité de crédit reste fixe et s\u2019arrête à la fin du prêt.';
   }
   panel.appendChild(note);
+
+  // Loyer cible pour un retour sur investissement de 10 ans
+  const cible = loyerCiblePourRetour(p, 10);
+  const cibleBox = document.createElement('div');
+  cibleBox.className = 'metric';
+  cibleBox.style.marginTop = '26px';
+  if(cible.immediat){
+    cibleBox.innerHTML = `<div class="val num good">Déjà atteint</div><div class="lbl">Loyer cible pour un retour à 10 ans</div>`;
+  } else {
+    const actuel = num(p.loyer);
+    const cls = actuel >= cible.loyerMensuel ? 'good' : 'bad';
+    cibleBox.innerHTML = `<div class="val ${cls} num">${fmtEUR(cible.loyerMensuel)}</div><div class="lbl">Loyer cible pour un retour à 10 ans</div>`;
+  }
+  panel.appendChild(cibleBox);
+  const cibleHint = document.createElement('div');
+  cibleHint.className = 'hint';
+  cibleHint.textContent = cible.immediat
+    ? 'Ton apport personnel est nul ou négatif : le retour sur investissement est déjà immédiat, quel que soit le loyer.'
+    : 'Loyer mensuel (charges et mensualité de crédit actuelles inchangées) nécessaire pour récupérer ton apport en 10 ans via le cash-flow. En vert s\u2019il est déjà atteint par le loyer renseigné dans Financement, en rouge sinon.';
+  panel.appendChild(cibleHint);
+
+  const info = document.createElement('div');
+  info.className = 'info-block';
+  info.innerHTML = `
+    <h3>À quoi correspond le retour sur investissement ?</h3>
+    <p>C\u2019est le nombre d\u2019années nécessaires pour récupérer, via le cash-flow mensuel du bien, l\u2019apport personnel que tu as investi au départ (le montant non couvert par l\u2019emprunt : prix d\u2019achat + frais annexes + travaux − somme empruntée).</p>
+    <p>Formule : <code>apport personnel ÷ cash-flow annuel</code>, où le cash-flow annuel correspond à <code>(loyer − charges − mensualité de crédit) × 12</code>.</p>
+    <p>Ce calcul utilise les valeurs actuelles du loyer et des charges (sans l\u2019inflation renseignée dans Financement, qui ne sert qu\u2019à la projection sur 25 ans ci-dessus). Si le cash-flow mensuel est négatif ou nul, l\u2019apport n\u2019est jamais récupéré par ce seul mécanisme et l\u2019indicateur affiche « Non atteint ». Si aucun apport personnel n\u2019est nécessaire (l\u2019emprunt couvre tout), il affiche « Immédiat ».</p>
+  `;
+  panel.appendChild(info);
 
   container.appendChild(panel);
 }
