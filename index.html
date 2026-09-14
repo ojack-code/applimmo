@@ -9,7 +9,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="App'immo">
+<meta name="apple-mobile-web-app-title" content="Rendement">
 <link rel="icon" href="icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -300,7 +300,7 @@
 
 <header class="top">
   <div>
-    <h1>App'immo</h1>
+    <h1>Rendement</h1>
     <div class="sub">Suivi de rentabilité de tes projets immobiliers</div>
   </div>
 </header>
@@ -382,6 +382,10 @@ function travauxTotal(p){
 }
 function coutTotal(p){
   return num(p.prixAchat) + num(p.fraisAnnexes) + travauxTotal(p);
+}
+// Plafond de l'emprunt : (prix d'achat + travaux) − 10 %.
+function maxEmprunt(p){
+  return (num(p.prixAchat) + travauxTotal(p)) * 0.9;
 }
 // Coût affiché dans le résumé : travaux + prix d'achat + frais annexes (onglet Infos).
 function coutTotalResume(p){
@@ -711,7 +715,56 @@ function renderFinancement(container, p){
   const panel = document.createElement('div');
   panel.className = 'panel active';
 
-  panel.appendChild(field('Somme empruntée (€)', p.sommeEmpruntee, v => p.sommeEmpruntee = v, { type: 'number', inputmode: 'decimal' }));
+  // Le plafond dépend du prix d'achat et des travaux : on ramène la valeur
+  // stockée sous le plafond si elle le dépasse (ex. suite à une modification
+  // du prix d'achat ou des travaux depuis un autre onglet).
+  const plafondInitial = maxEmprunt(p);
+  if(plafondInitial > 0 && num(p.sommeEmpruntee) > plafondInitial){
+    p.sommeEmpruntee = String(Math.round(plafondInitial * 100) / 100);
+    saveProjects();
+  }
+
+  const empruntWrap = document.createElement('div');
+  empruntWrap.className = 'field';
+  const empruntLbl = document.createElement('label');
+  empruntLbl.textContent = 'Somme empruntée (€)';
+  empruntWrap.appendChild(empruntLbl);
+
+  const empruntInput = document.createElement('input');
+  empruntInput.type = 'number';
+  empruntInput.inputMode = 'decimal';
+  empruntInput.value = p.sommeEmpruntee || '';
+  empruntWrap.appendChild(empruntInput);
+
+  const empruntHint = document.createElement('div');
+  empruntHint.className = 'hint';
+  empruntHint.id = 'empruntHint';
+  empruntHint.textContent = `Plafond autorisé (prix d\u2019achat + travaux − 10 %) : ${fmtEUR(maxEmprunt(p))}`;
+  empruntWrap.appendChild(empruntHint);
+
+  const empruntWarn = document.createElement('div');
+  empruntWarn.className = 'hint';
+  empruntWarn.style.color = 'var(--bad)';
+  empruntWarn.style.display = 'none';
+  empruntWarn.textContent = 'Montant ramené au plafond autorisé.';
+  empruntWrap.appendChild(empruntWarn);
+
+  empruntInput.oninput = (e) => {
+    const m = maxEmprunt(p);
+    let v = num(e.target.value);
+    if(m > 0 && v > m){
+      v = Math.round(m * 100) / 100;
+      e.target.value = v;
+      empruntWarn.style.display = 'block';
+    } else {
+      empruntWarn.style.display = 'none';
+    }
+    p.sommeEmpruntee = e.target.value;
+    saveProjects();
+    renderSummaryOnly();
+  };
+
+  panel.appendChild(empruntWrap);
 
   const row1 = document.createElement('div');
   row1.className = 'field-row';
